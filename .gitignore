@@ -1,0 +1,20 @@
+# Salidas de compilación
+TP3/tools/arm_build/out/
+Debug/
+Release/
+*.o
+*.elf
+*.axf
+*.map
+
+# MCUXpresso / Eclipse
+.metadata/
+.settings/
+*.launch
+
+# MATLAB
+*.asv
+*.autosave
+
+# Python
+__pycache__/
