@@ -60,6 +60,27 @@
 #define APP_LONG_PRESS_MS   700U
 #define APP_DEBOUNCE_MS     30U
 
+/* ---------------------------------------------------------------------------
+ * Salida para el OSCILOSCOPIO: DAC0 (12 bits, 0..3,3 V) en P4_2 = J1 pin 4.
+ * El DAC reproduce en bucle, a la misma fs, el buffer de SALIDA:
+ *   - bypass: el bloque de N muestras capturado (se compara con el generador)
+ *   - FFT   : los N/2 bins del espectro de amplitud ("analizador de espectro")
+ *             -> en pantalla, tiempo t desde el pulso de SYNC <-> f = t*fs^2/N
+ * En FFT, APP_DAC_FFT_FULL_V volts de amplitud = 3,3 V a la salida del DAC.
+ * ------------------------------------------------------------------------- */
+#define APP_DAC             DAC0
+#define APP_DAC_FULL_SCALE  4095.0f
+#define APP_DAC_FFT_FULL_V  1.65f
+
+/* Pines de medición para el osciloscopio (salidas digitales 0 / 3,3 V) */
+#define APP_PIN_SYNC_GPIO   GPIO1       /* P1_23 = J1 pin 8 : pulso al empezar cada barrido del DAC */
+#define APP_PIN_SYNC_PIN    23U
+#define APP_PIN_ACQ_GPIO    GPIO1       /* P1_22 = J3 pin 3 : en alto mientras adquiere (ancho = N/fs) */
+#define APP_PIN_ACQ_PIN     22U
+#define APP_PIN_PROC_GPIO   GPIO4       /* P4_0  = J2 pin 18: en alto mientras procesa (ancho = tiempo FFT) */
+#define APP_PIN_PROC_PIN    0U
+#define APP_SYNC_WIDTH      4U          /* duración del pulso de SYNC, en muestras */
+
 /* LED RGB (activos en bajo) */
 #define APP_LED_RED_GPIO    GPIO0
 #define APP_LED_RED_PIN     10U

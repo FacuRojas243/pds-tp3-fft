@@ -30,7 +30,7 @@ DRV      := $(SDK_CORE)/drivers
 INCS := -I$(SRC_DIR) -I$(SDK_DEV) -I$(SDK_DEV)/../periph -I$(SDK_DEV)/drivers -I$(SDK_BOARD) \
         -I$(DRV)/common -I$(DRV)/ctimer -I$(DRV)/gpio -I$(DRV)/lpadc \
         -I$(DRV)/lpflexcomm -I$(DRV)/lpflexcomm/lpuart -I$(DRV)/mcx_spc \
-        -I$(DRV)/vref_1 -I$(DRV)/port -I$(CMSIS_CORE) \
+        -I$(DRV)/vref_1 -I$(DRV)/dac_1 -I$(DRV)/port -I$(CMSIS_CORE) \
         -I$(CMSIS_DSP)/Include -I$(CMSIS_DSP)/PrivateInclude
 
 CFLAGS  := $(CPUFLAGS) $(DEFS) $(INCS) -O2 -g -std=gnu11 -Wall -Wextra \
@@ -44,7 +44,7 @@ SDK_SRCS := $(SDK_DEV)/system_MCXN947_cm33_core0.c $(SDK_DEV)/drivers/fsl_clock.
             $(DRV)/common/fsl_common.c $(DRV)/common/fsl_common_arm.c \
             $(DRV)/ctimer/fsl_ctimer.c $(DRV)/gpio/fsl_gpio.c $(DRV)/lpadc/fsl_lpadc.c \
             $(DRV)/lpflexcomm/fsl_lpflexcomm.c $(DRV)/lpflexcomm/lpuart/fsl_lpuart.c \
-            $(DRV)/mcx_spc/fsl_spc.c $(DRV)/vref_1/fsl_vref.c
+            $(DRV)/mcx_spc/fsl_spc.c $(DRV)/vref_1/fsl_vref.c $(DRV)/dac_1/fsl_dac.c
 DSP_SRCS := $(CMSIS_DSP)/Source/TransformFunctions/TransformFunctions.c \
             $(CMSIS_DSP)/Source/CommonTables/CommonTables.c \
             $(CMSIS_DSP)/Source/ComplexMathFunctions/ComplexMathFunctions.c \

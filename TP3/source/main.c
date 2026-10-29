@@ -11,6 +11,13 @@
  *   y manda el buffer de salida por el puerto serie (LPUART4 / VCOM) en una
  *   trama binaria que grafica la GUI de MATLAB.
  *
+ * Para el osciloscopio (ver app_config.h):
+ *   DAC0 (J1-4)  reproduce en bucle el buffer de salida a fs: el bloque
+ *                capturado en bypass o el espectro en modo FFT.
+ *   SYNC (J1-8)  pulso al comienzo de cada barrido del DAC -> disparo externo.
+ *   ACQ  (J3-3)  en alto mientras se adquieren las N muestras (ancho = N/fs).
+ *   PROC (J2-18) en alto mientras se procesa (ancho = tiempo de la FFT).
+ *
  * Teclas:
  *   SW2           : habilita la FFT / bypass
  *   SW3 corto     : cambia N (512 -> 1024 -> 2048 -> 512 ...)
@@ -32,6 +39,7 @@
 #include "fsl_common.h"
 #include "fsl_clock.h"
 #include "fsl_ctimer.h"
+#include "fsl_dac.h"
 #include "fsl_gpio.h"
 #include "fsl_lpadc.h"
 #include "fsl_lpuart.h"
@@ -75,6 +83,16 @@ static volatile uint16_t s_adc_raw[APP_N_MAX];
 static volatile uint32_t s_idx;
 static volatile uint32_t s_acq_n;
 static volatile bool s_block_ready;
+static volatile bool s_acquiring;
+
+/* Buffers del DAC (doble buffer: la ISR lee uno mientras el lazo llena el otro;
+ * el cambio se hace al terminar un barrido para no "romper" la imagen) */
+static uint16_t s_dac_buf[2][APP_N_MAX];
+static volatile uint32_t s_dac_sel;          /* buffer que está sonando */
+static volatile uint32_t s_dac_len = 1U;
+static volatile uint32_t s_dac_idx;
+static volatile uint32_t s_dac_next_len;
+static volatile bool s_dac_swap_pending;
 
 /* Entrada en volts y buffer de SALIDA (espectro o copia en bypass) */
 static float32_t s_x_in[APP_N_MAX];
@@ -406,18 +424,49 @@ void APP_ADC_IRQHandler(void)
             s_idx        = ++i;
             if (i >= s_acq_n)
             {
-                CTIMER_StopTimer(APP_CTIMER);
+                s_acquiring   = false;
                 s_block_ready = true;
+                GPIO_PortClear(APP_PIN_ACQ_GPIO, 1UL << APP_PIN_ACQ_PIN);
             }
         }
     }
     SDK_ISR_EXIT_BARRIER;
 }
 
+/* Se ejecuta a fs. El timer corre siempre: el DAC sigue reproduciendo el
+ * buffer de salida aunque el lazo principal esté procesando o transmitiendo. */
 static void ctimer_match_cb(uint32_t flags)
 {
     (void)flags;
-    LPADC_DoSoftwareTrigger(APP_ADC, 1U); /* máscara 1 = trigger 0 */
+
+    /* 1) muestreo: sólo mientras haya que llenar el buffer de entrada */
+    if (s_acquiring)
+    {
+        LPADC_DoSoftwareTrigger(APP_ADC, 1U); /* máscara 1 = trigger 0 */
+    }
+
+    /* 2) DAC: una muestra del buffer de salida por período de muestreo */
+    uint32_t i = s_dac_idx;
+    if (i == 0U)
+    {
+        if (s_dac_swap_pending)
+        {
+            s_dac_sel ^= 1U;
+            s_dac_len          = s_dac_next_len;
+            s_dac_swap_pending = false;
+        }
+        GPIO_PortSet(APP_PIN_SYNC_GPIO, 1UL << APP_PIN_SYNC_PIN);
+    }
+    else if (i == APP_SYNC_WIDTH)
+    {
+        GPIO_PortClear(APP_PIN_SYNC_GPIO, 1UL << APP_PIN_SYNC_PIN);
+    }
+    DAC_SetData(APP_DAC, s_dac_buf[s_dac_sel][i]);
+    if (++i >= s_dac_len)
+    {
+        i = 0U;
+    }
+    s_dac_idx = i;
 }
 
 static ctimer_callback_t s_ctimer_cb[] = {ctimer_match_cb};
@@ -446,6 +495,9 @@ static float32_t ctimer_set_fs(uint32_t fs)
     {
         div = 2U;
     }
+    /* Se frena y resetea el contador: si quedara por encima del nuevo match
+     * daría la vuelta en 2^32 cuentas antes de volver a disparar. */
+    CTIMER_StopTimer(APP_CTIMER);
     m.matchValue         = div - 1U;
     m.enableCounterReset = true;
     m.enableCounterStop  = false;
@@ -454,6 +506,8 @@ static float32_t ctimer_set_fs(uint32_t fs)
     m.enableInterrupt    = true;
     CTIMER_SetupMatch(APP_CTIMER, kCTIMER_Match_0, &m);
     (void)EnableIRQ(APP_CTIMER_IRQn);
+    CTIMER_Reset(APP_CTIMER);
+    CTIMER_StartTimer(APP_CTIMER);
 
     return (float32_t)clk / (float32_t)div;
 }
@@ -463,8 +517,52 @@ static void start_acquisition(void)
     s_idx         = 0U;
     s_acq_n       = s_active.n;
     s_block_ready = false;
-    CTIMER_Reset(APP_CTIMER);
-    CTIMER_StartTimer(APP_CTIMER);
+    GPIO_PortSet(APP_PIN_ACQ_GPIO, 1UL << APP_PIN_ACQ_PIN);
+    s_acquiring = true; /* a partir del próximo tick del CTIMER se muestrea */
+}
+
+static void dac_init(void)
+{
+    dac_config_t cfg;
+
+    CLOCK_SetClkDiv(kCLOCK_DivDac0Clk, 1U);
+    CLOCK_AttachClk(kFRO_HF_to_DAC0);
+    SPC_EnableActiveModeAnalogModules(SPC0, kSPC_controlDac0);
+
+    DAC_GetDefaultConfig(&cfg); /* FIFO deshabilitada: escribir DATA = salida inmediata */
+    cfg.referenceVoltageSource = kDAC_ReferenceVoltageSourceAlt1; /* VDD_ANA = 3,3 V */
+    DAC_Init(APP_DAC, &cfg);
+    DAC_Enable(APP_DAC, true);
+    s_dac_buf[0][0] = 2048U;     /* mitad de escala hasta tener el primer bloque */
+    DAC_SetData(APP_DAC, s_dac_buf[0][0]);
+}
+
+/* Pasa el buffer de salida a cuentas del DAC y lo deja listo para el próximo
+ * barrido. Si el barrido anterior todavía no tomó el buffer pendiente (fs
+ * baja con N grande), se saltea este bloque en vez de pisarlo a mitad. */
+static void dac_load(const float32_t *y, uint32_t len, float32_t volts_per_fullscale)
+{
+    if (s_dac_swap_pending)
+    {
+        return;
+    }
+    uint16_t *dst     = s_dac_buf[s_dac_sel ^ 1U];
+    const float32_t k = APP_DAC_FULL_SCALE / volts_per_fullscale;
+    for (uint32_t i = 0U; i < len; i++)
+    {
+        float32_t c = y[i] * k;
+        if (c < 0.0f)
+        {
+            c = 0.0f;
+        }
+        else if (c > APP_DAC_FULL_SCALE)
+        {
+            c = APP_DAC_FULL_SCALE;
+        }
+        dst[i] = (uint16_t)(c + 0.5f);
+    }
+    s_dac_next_len     = len;
+    s_dac_swap_pending = true;
 }
 
 static void gpio_init(void)
@@ -477,6 +575,12 @@ static void gpio_init(void)
     GPIO_PinInit(APP_LED_RED_GPIO, APP_LED_RED_PIN, &out);
     GPIO_PinInit(APP_LED_GREEN_GPIO, APP_LED_GREEN_PIN, &out);
     GPIO_PinInit(APP_LED_BLUE_GPIO, APP_LED_BLUE_PIN, &out);
+
+    /* Pines de medición: arrancan en bajo */
+    const gpio_pin_config_t test_out = {kGPIO_DigitalOutput, 0U};
+    GPIO_PinInit(APP_PIN_SYNC_GPIO, APP_PIN_SYNC_PIN, &test_out);
+    GPIO_PinInit(APP_PIN_ACQ_GPIO, APP_PIN_ACQ_PIN, &test_out);
+    GPIO_PinInit(APP_PIN_PROC_GPIO, APP_PIN_PROC_PIN, &test_out);
 }
 
 /*******************************************************************************
@@ -490,6 +594,7 @@ int main(void)
     gpio_init();
     uart_init();
     adc_init();
+    dac_init();
     ctimer_init();
     cycle_counter_init();
     (void)SysTick_Config(SystemCoreClock / 1000U);
@@ -552,11 +657,13 @@ int main(void)
         info.core_clk = SystemCoreClock;
         info.seq      = s_seq++;
 
+        GPIO_PortSet(APP_PIN_PROC_GPIO, 1UL << APP_PIN_PROC_PIN);
         if (s_active.mode == MODE_FFT)
         {
             fft_result_t res;
             info.type     = FRAME_TYPE_FFT;
             info.count    = fft_proc_spectrum(s_x_in, s_y_out, &res);
+            GPIO_PortClear(APP_PIN_PROC_GPIO, 1UL << APP_PIN_PROC_PIN);
             info.peak_bin = res.peak_bin;
             info.peak_amp = res.peak_amp;
             info.dc       = res.dc;
@@ -569,11 +676,16 @@ int main(void)
             info.type  = FRAME_TYPE_TIME;
             info.count = (uint16_t)n;
             arm_copy_f32(s_x_in, s_y_out, n);
+            GPIO_PortClear(APP_PIN_PROC_GPIO, 1UL << APP_PIN_PROC_PIN);
             arm_mean_f32(s_x_in, n, &mean);
             info.dc = mean;
         }
 
-        /* 4) Transmisión del buffer de salida */
+        /* 4) Buffer de salida al DAC (osciloscopio): en bypass se reproduce tal
+         *    cual (0..3,3 V); en FFT, APP_DAC_FFT_FULL_V de amplitud = 3,3 V */
+        dac_load(s_y_out, info.count, (info.type == FRAME_TYPE_FFT) ? APP_DAC_FFT_FULL_V : APP_ADC_VREF_V);
+
+        /* 5) Transmisión del buffer de salida */
         frame_send(&info, s_y_out, uart_write);
         GPIO_PortToggle(APP_LED_BLUE_GPIO, 1UL << APP_LED_BLUE_PIN);
     }

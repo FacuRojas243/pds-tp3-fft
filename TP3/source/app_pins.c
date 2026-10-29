@@ -9,6 +9,10 @@
  *   P0_23 -> GPIO    (SW2)
  *   P0_6  -> GPIO    (SW3)
  *   P0_10 / P0_27 / P1_2 -> GPIO (LED rojo / verde / azul)
+ *   P4_2  -> DAC0_OUT (salida al osciloscopio, J1 pin 4)
+ *   P1_23 -> GPIO    (SYNC, J1 pin 8)
+ *   P1_22 -> GPIO    (ACQ,  J3 pin 3)
+ *   P4_0  -> GPIO    (PROC, J2 pin 18)
  */
 #include "app_pins.h"
 
@@ -39,6 +43,7 @@ void APP_InitPins(void)
     CLOCK_EnableClock(kCLOCK_Port4);
     CLOCK_EnableClock(kCLOCK_Gpio0);
     CLOCK_EnableClock(kCLOCK_Gpio1);
+    CLOCK_EnableClock(kCLOCK_Gpio4);
 
     /* UART de debug (MCU-Link VCOM) */
     pin_cfg(PORT1, 8U, kPORT_MuxAlt2, true, false);
@@ -55,4 +60,12 @@ void APP_InitPins(void)
     pin_cfg(PORT0, 10U, kPORT_MuxAlt0, true, false);
     pin_cfg(PORT0, 27U, kPORT_MuxAlt0, true, false);
     pin_cfg(PORT1, 2U, kPORT_MuxAlt0, true, false);
+
+    /* Salida del DAC (función analógica: sin buffer digital) */
+    pin_cfg(PORT4, 2U, kPORT_MuxAlt0, false, false);
+
+    /* Pines de medición para el osciloscopio */
+    pin_cfg(PORT1, 23U, kPORT_MuxAlt0, true, false);
+    pin_cfg(PORT1, 22U, kPORT_MuxAlt0, true, false);
+    pin_cfg(PORT4, 0U, kPORT_MuxAlt0, true, false);
 }

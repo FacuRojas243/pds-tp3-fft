@@ -258,7 +258,17 @@ function tp3_fft_gui
                   sprintf('Pico       : %.2f Hz  (bin %d), %.4f V', f.peak_bin * df, f.peak_bin, f.peak_amp)
                   sprintf('arm_cfft   : %d ciclos = %.1f %ss', f.cyc_fft, 1e6 * f.cyc_fft / clk, MU)
                   sprintf('Proc. total: %d ciclos = %.1f %ss', f.cyc_total, 1e6 * f.cyc_total / clk, MU)
-                  sprintf('Nucleo     : %.0f MHz', clk / 1e6)}];
+                  sprintf('Nucleo     : %.0f MHz', clk / 1e6)
+                  ''
+                  'Osciloscopio (DAC J1-4, disparo SYNC J1-8):'
+                  sprintf('  barrido de %.2f ms, 1 ms <-> %.1f Hz', 1e3 * f.count / f.fs, f.fs^2 / f.n / 1e3)
+                  sprintf('  pico esperado a %.3f ms del SYNC', 1e3 * f.peak_bin / f.fs)
+                  sprintf('  3,3 V = %.2f V de amplitud', 1.65)}];
+        else
+            L = [L
+                 {''
+                  'Osciloscopio (DAC J1-4, disparo SYNC J1-8):'
+                  sprintf('  bloque de %.2f ms repetido en bucle', 1e3 * f.count / f.fs)}];
         end
     end
 
